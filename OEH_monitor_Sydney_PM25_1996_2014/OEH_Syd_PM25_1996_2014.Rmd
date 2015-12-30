@@ -1,0 +1,338 @@
+
+---
+title: "OEH air pollution PM2.5 data 1996-2014 pre-processing report"
+author: "Ivan C. Hanigan"
+date: "24 August 2015"
+output: 
+    html_document:
+        toc: true
+---
+
+# Aim
+- clean the data
+- standardise to same format as biomass smoke event database
+- import to the database so that the imputed network average and extreme events can be computed downstream in the biomass_smoke_events database project
+
+# The data provided by OEH website
+The data were downloaded from http://www.environment.nsw.gov.au/AQMS/search.htm 
+on 26/8/2015 by ivanhanigan
+
+The selections made via web UI were:
+- http://www.environment.nsw.gov.au/AQMS/search.htm 26/8/15
+- site avs, daily 01/05/1996 (I know this is the starting month from prior work)-26/8/15 (today) 
+- sites <- "'Richmond', 'Liverpool', 'Earlwood', 'Chullora'" 
+- PM2.5 load data 
+  
+# Results
+
+# The code
+```{r, eval = F}
+
+# functions
+library(readxl)
+library(stringr)
+library(disentangle)
+library(RSQLite)  
+#drv <- dbDriver("SQLite")
+#con <- dbConnect(drv, dbname = "~/tools/web2py/applications/biomass_smoke_events/databases/storage.sqlite")
+#dbListTables(con)
+
+# set the working directory
+projdir <- "~/projects/Air_Pollution_Monitoring_Stations_NSW/OEH_monitor_Sydney_PM25_1996_2014"
+setwd(projdir)
+indir <- "data_provided"
+dir(indir)
+#infile <- "pm25_av_syd_1996_2015_tmp_table_4108_1440625025.csv"
+infile <- "pm25_av_syd_1996_2015_with_camden_tmp_table_23283_1441001164.csv"
+
+outdir <- "data_derived"
+#outfile <- "air_pollution_sydney_pm25_1996_2014.csv"
+outfile <- "air_pollution_sydney_pm25_1996_2014_with_camden.csv"
+# load
+dat  <- read.csv(file.path(indir, infile), skip = 2)
+str(dat)
+# 'data.frame': 7058 obs. of  5 variables:
+
+# clean
+dat$Date <- as.Date(dat$Date, format = "%d/%m/%Y")
+summary(dat$Date)
+str(dat)
+
+#### name:qc plots ####
+str(dat[,1:5])
+names(dat)[grep("pm10", names(dat))]
+plot(dat$date, dat$lindfield_pm10_24h_average_, type = "l", ylim = c(0,200))
+dev.off()
+
+#### name:standardise names ####
+orignames <- names(dat)
+orignames
+# harmonise names of sites and pollutants with the biomass smoke
+# events database
+# first get rid of the units suffix
+namelist <- names(dat)
+#namelist <- sapply(namelist, str_split, "\\[")
+#namelist <- do.call(rbind.data.frame, namelist)[,1]
+# lowercase with underscores
+names(dat)  <- disentangle::lcu(namelist)
+str(dat)
+#matrix(names(dat))
+
+summary(dat)
+
+# this data dictionary step might only need doing once, set set as optional
+do_datadict  <- FALSE
+if(do_datadict){
+# use my own functions for summarising the data
+dd  <- data_dictionary(dat, show_levels = 10)
+write.csv(dd, file.path(outdir, gsub(".csv", "_data_dictionary.csv", outfile)), row.names = F)
+
+vl <- variable_names_and_labels(datadict=dd, orig_names=orignames)
+vl[,1:3]
+write.csv(vl, file.path(outdir, gsub(".csv", "_variable_names_and_labels.csv", outfile)), row.names = F)
+}
+# looking at the names etc can see this dataset is wide with one col
+# for date and the rest are the sitename_pollutant, to make this tidy
+# I will first reshape to long, then use the list of sitenames to
+# create a column of pollutants, then use the list of pollutants to
+# create a column of site names
+# (polls are mapped to a new name that is standardised in the biomass
+# smoke db)
+# then finally reshape the data from long to wide with a col for date,
+# site and then the polls as individual cols
+
+
+# split names
+sitename <-  sapply(names(dat)[2:ncol(dat)], str_split, "_")
+sitename <- do.call(rbind.data.frame, sitename)
+sitename <- as.character(sitename[,1])
+sitename
+
+#### name:reshape to long
+str(dat)
+ap_long <- reshape2::melt(dat, id = c("date"))
+ap_long$variable <- as.character(ap_long$variable)
+head(ap_long)
+head(names(table(ap_long$variable)), 20)
+
+#### name:substitutions of names ####   
+ap_long$pollutant  <- ap_long$variable
+head(ap_long)
+sitename
+# now substitute the site name so we just remain with pollutant
+#newvar <- cbind(sitename,fixed_names[,"variable_name"])
+#newvar <-  cbind(newvar, character(nrow(newvar)))
+#head(newvar, 20)
+for(i in 1:length(sitename)){
+  site <- sitename[i]
+  cat(sprintf('ap_long$pollutant <- gsub("%s_", "", ap_long$pollutant)', site))
+  cat("\n")
+}
+
+# now to subtract the name of the station from the name of the
+# pollutant
+ap_long$pollutant <- gsub("liverpool_", "", ap_long$pollutant)
+ap_long$pollutant <- gsub("chullora_", "", ap_long$pollutant)
+ap_long$pollutant <- gsub("earlwood_", "", ap_long$pollutant)
+ap_long$pollutant <- gsub("richmond_", "", ap_long$pollutant)
+ap_long$pollutant <- gsub("camden_", "", ap_long$pollutant)
+matrix(names(table(ap_long$pollutant)))
+
+## # get standardised names of pollutants from biomass smoke db
+#namelist_st <- names(dbGetQuery(con, "select * from combined_pollutants limit 1"))
+#matrix(namelist_st)
+# o3 1 hour 24hav is not applicable because the 4hr is the only one that we use
+namelist_st <- read.csv(textConnection("oldname, newname                         
+co_24h_average_ppm_,        co_av
+neph_24h_average_bsp_,      bsp_av
+no2_24h_average_pphm_ ,     no2_av
+ozone_24h_average_pphm_,    o3_1h_Not_Applicable
+ozone_24h_average_pphm_1_4h,o3_av
+pm10_24h_average_µg_m_,     pm10_av
+pm2_5_24h_average_µg_m_,    pm25_av
+so2_24h_average_pphm_, so2_av"
+), strip.white=T)
+namelist_st
+
+
+## # now change the poll names
+## for(i in 1:nrow(namelist_st)){
+##   oldnam <- namelist_st[i,1]
+##   newnam <- namelist_st[i,2]  
+##   cat(sprintf('ap_long$pollutant <- gsub("%s", "%s", ap_long$pollutant)', oldnam, newnam))
+##   cat("\n")
+## }
+## ap_long$pollutant <- gsub("co_24h_average_ppm_", "co_av", ap_long$pollutant)
+## ap_long$pollutant <- gsub("neph_24h_average_bsp_", "bsp_av", ap_long$pollutant)
+## ap_long$pollutant <- gsub("no2_24h_average_pphm_", "no2_av", ap_long$pollutant)
+## ap_long$pollutant <- gsub("ozone_24h_average_pphm_1_4h", "o3_av", ap_long$pollutant)
+## ap_long$pollutant <- gsub("ozone_24h_average_pphm_", "o3_1h_Not_Applicable", ap_long$pollutant)
+## ap_long$pollutant <- gsub("pm10_24h_average_µg_m_", "pm10_av", ap_long$pollutant)
+ap_long$pollutant <- gsub("pm2_5_24h_average_µg_m_", "pm25_av", ap_long$pollutant)
+#ap_long$pollutant <- gsub("so2_24h_average_pphm_", "so2_av", ap_long$pollutant)
+matrix(names(table(ap_long$pollutant)))
+head(ap_long)
+
+## finally do the site column
+ap_long$site  <- ap_long$variable
+head(ap_long)
+## for(i in 1:nrow(namelist_st)){
+##   oldnam <- namelist_st[i,1]
+##   cat(sprintf('ap_long$site <- gsub("_%s", "", ap_long$site)', oldnam))
+##   cat("\n")
+## }
+
+## ap_long$site <- gsub("_co_24h_average_ppm_", "", ap_long$site)
+## ap_long$site <- gsub("_neph_24h_average_bsp_", "", ap_long$site)
+## ap_long$site <- gsub("_no2_24h_average_pphm_", "", ap_long$site)
+## ap_long$site <- gsub("_ozone_24h_average_pphm_1_4h", "", ap_long$site)
+## ap_long$site <- gsub("_ozone_24h_average_pphm_", "", ap_long$site)
+## ap_long$site <- gsub("_pm10_24h_average_µg_m_", "", ap_long$site)
+ap_long$site <- gsub("_pm2_5_24h_average_µg_m_", "", ap_long$site)
+#ap_long$site <- gsub("_so2_24h_average_pphm_", "", ap_long$site)
+matrix(names(table(ap_long$site)))
+head(ap_long)
+
+# and now standardise these to the names used in biomass smoke db
+#namelist_sites <- dbGetQuery(con, "select site from combined_pollutants group by site order by site")
+#namelist_sites
+# NB camden, camp west and prospect are new additions
+# coords sourced from OEH website
+namelist_sites <- read.csv(textConnection("oldname, newname
+bargo            , Bargo
+bringelly        , Bringelly
+camden           , Camden
+campbelltown_west, Campbelltown West
+chullora         , Chullora
+earlwood         , Earlwood 
+lindfield        , Lindfield
+liverpool        , Liverpool
+macarthur        , Macarthur
+oakdale          , Oakdale
+prospect         , Prospect
+randwick         , Randwick
+richmond         , Richmond
+rozelle          , Rozelle
+st_marys         , St Marys
+vineyard        ,  Vineyard "
+), strip.white=T)
+
+head(ap_long)
+## for(i in 1:nrow(namelist_sites)){
+##   oldnam <- namelist_sites[i,1]
+##   newnam <- namelist_sites[i,2]  
+##   cat(sprintf('ap_long$site <- gsub("%s", "%s", ap_long$site)', oldnam, newnam))
+##   cat("\n")
+## }
+#ap_long$site <- gsub("bargo", "Bargo", ap_long$site)
+#ap_long$site <- gsub("bringelly", "Bringelly", ap_long$site)
+ap_long$site <- gsub("camden", "Camden", ap_long$site)
+#ap_long$site <- gsub("campbelltown_west", "Campbelltown West", ap_long$site)
+ap_long$site <- gsub("chullora", "Chullora", ap_long$site)
+ap_long$site <- gsub("earlwood", "Earlwood", ap_long$site)
+#ap_long$site <- gsub("lindfield", "Lindfield", ap_long$site)
+ap_long$site <- gsub("liverpool", "Liverpool", ap_long$site)
+#ap_long$site <- gsub("macarthur", "Macarthur", ap_long$site)
+#ap_long$site <- gsub("oakdale", "Oakdale", ap_long$site)
+## ap_long$site <- gsub("prospect", "Prospect", ap_long$site)
+## ap_long$site <- gsub("randwick", "Randwick", ap_long$site)
+ap_long$site <- gsub("richmond", "Richmond", ap_long$site)
+## ap_long$site <- gsub("rozelle", "Rozelle", ap_long$site)
+## ap_long$site <- gsub("st_marys", "St Marys", ap_long$site)
+## ap_long$site <- gsub("vineyard", "Vineyard", ap_long$site)
+head(ap_long)
+matrix(names(table(ap_long$site)))
+
+#### reshape to tidy and store outputs
+ap_wide <- reshape::cast(ap_long[,c("site", "date", "pollutant", "value")], site + date ~ pollutant)
+ap_wide <- as.data.frame(ap_wide)
+str(ap_wide)
+dd <- data_dictionary(ap_wide)
+dd
+#### store the derived dataset as CSV
+outfile
+write.csv(ap_wide, file.path(outdir, outfile), row.names  = F)
+write.csv(dd, file.path(outdir, gsub(".csv", "_data_dictionary.csv", outfile)), row.names  = F)
+
+#### add to the database
+#dbListTables(con)
+outtable <- gsub(".csv", "", outfile)
+# sqlite dates as text
+ap_wide$date <- as.character(ap_wide$date)
+#dbWriteTable(con, outtable, ap_wide, row.names = F)
+# append to the columns as appropriate (replace the old data from 2009
+# as the new data has additional validation done)
+#dbGetQuery(con, "select site, count(*) from combined_pollutants group by site order by site")
+#sydsites <- dbGetQuery(con, sprintf("select site, count(*) from %s group by site order by site", outtable))$site
+#sydsites <- paste(sydsites, sep = "", collapse="','")
+#min(ap_wide$date)
+## dbGetQuery(con, "select site, max(date) from combined_pollutants group by site order by site")
+## dbGetQuery(con,
+## sprintf("delete 
+## from combined_pollutants
+## where site in ('%s')
+##   AND date >= '2009-01-01'
+## ", sydsites)
+## )
+## dbGetQuery(con, "select site, max(date) from combined_pollutants group by site order by site")
+## dbGetQuery(con, sprintf("select site, max(date) from %s group by site order by site", outtable))
+## qc <- dbGetQuery(con,
+## sprintf("select site, date, bsp_av, co_av, no2_av, o3_av, pm10_av, pm25_av, so2_av
+## from %s
+## where date >= '2009-01-01'
+## ", outtable)
+##             )
+## str(qc)
+## ## NB I am only doing the 24hr averages, as the maxima is a seperate
+## ## download and we did not use it as much 
+## dbSendQuery(con,
+## sprintf(
+## "INSERT INTO combined_pollutants(
+## site, date, bsp_av, co_av, no2_av, o3_av, pm10_av, pm25_av, so2_av
+## )
+## select site, date, bsp_av, co_av, no2_av, o3_av, pm10_av, pm25_av, so2_av
+## from %s
+## where date >= '2009-01-01'
+## ", outtable)
+##             )
+
+#### name:qc plots2 ####
+qc <- dbGetQuery(con, "select * from combined_pollutants where site = 'Lindfield' order by date")
+qc$date <- as.Date(qc$date)
+summary(qc)
+png("qc_lindfield.png")
+plot(qc$date, qc$pm10_av, type = "l", ylim = c(0,200))
+title("Lindfield")
+dev.off()
+
+# remove the temporary table
+#dbRemoveTable(con, outtable)
+
+
+#### the end ####
+sessionInfo()
+
+## R version 3.2.1 (2015-06-18)
+## Platform: x86_64-pc-linux-gnu (64-bit)
+## Running under: Ubuntu precise (12.04.5 LTS)
+
+## locale:
+##  [1] LC_CTYPE=en_AU.UTF-8       LC_NUMERIC=C              
+##  [3] LC_TIME=en_AU.UTF-8        LC_COLLATE=en_AU.UTF-8    
+##  [5] LC_MONETARY=en_AU.UTF-8    LC_MESSAGES=en_AU.UTF-8   
+##  [7] LC_PAPER=en_AU.UTF-8       LC_NAME=C                 
+##  [9] LC_ADDRESS=C               LC_TELEPHONE=C            
+## [11] LC_MEASUREMENT=en_AU.UTF-8 LC_IDENTIFICATION=C       
+
+## attached base packages:
+## [1] stats     graphics  grDevices utils     datasets  methods   base     
+
+## other attached packages:
+## [1] RSQLite_1.0.0     DBI_0.3.1         disentangle_1.4.4 stringr_0.6.2    
+## [5] readxl_0.1.0     
+
+## loaded via a namespace (and not attached):
+## [1] compiler_3.2.1 plyr_1.8.1     tools_3.2.1    reshape2_1.4.1 Rcpp_0.12.0   
+## [6] reshape_0.8.5 
+
+```
