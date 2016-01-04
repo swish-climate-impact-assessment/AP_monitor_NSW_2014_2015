@@ -1,0 +1,15 @@
+---
+title: "Air pollution data 1996-2015 processing report"
+author: "Ivan C. Hanigan"
+output: 
+    html_document:
+        toc: true
+---
+
+# Aim
+- clean the data
+- standardise to same format as biomass smoke event database
+- import to the database so that the imputed network average and extreme events can be computed downstream in the biomass_smoke_events_db project
+
+# The data provided by OEH website
+The data were downloaded from http://www.environment.nsw.gov.au/AQMS/search.htm
