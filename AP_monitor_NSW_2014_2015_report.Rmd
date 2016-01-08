@@ -5,6 +5,7 @@ output:
     html_document:
         toc: true
 ---
+
 # Aim
 - clean the data
 - standardise to same format as biomass smoke event database
@@ -18,21 +19,32 @@ Visit the website [http://www.environment.nsw.gov.au/AQMS/search.htm]() then:
 
 1. select data category = 'daily averages/max/min), 
 2. select 'download', 
-3. sites (do this by region, as required), then 'load data'
-
-As the data downloads can be time consuming and convoluted do these by region and keep track in a table:
-
-```{r, results = 'asis', echo = F}
-#dir("data_provided")
-tab <- read.csv(textConnection("region, filename
-sydney, tmp_table_23378_1451991105.xls
-newcastle and wollongong, tmp_table_29073_1452172650.xls
-"), stringsAsFactor = F)
-print(xtable::xtable(tab), type = "html", include.rownames = F)
-```
+3. sites (do this for all regions, or as required - more selections run the risk of hitting the maximum size limit and download will fail)
+4. Hit 'load data', wait, then click link and save the file to a local directory such as '/data_provided'   
 
 Below is a screenshot of this procedure:
 
-![figures_and_tables/ap_nsw_newcastle_and_wollongong.png](figures_and_tables/ap_nsw_newcastle_and_wollongong.png)
+![figures_and_tables/ap_nsw_download.png](figures_and_tables/ap_nsw_download.png)
+
+## Step 2: read in to R and clean
+
+1. open the xls file in a spreadsheet program like Excel or LibreOffice
+2. use the 'save as' function to export this to a CSV file with the same name
+3. for each file in the download log we will conduct the same procedure so create a loop
+
+```{r, eval = F}
+indir <- "data_provided"
+dir(indir)
+tab
+infile <- tab$filename[1]
+infile
+outdir <- "data_derived"
+outfile <- "air_pollution_sydney_2008_2014.csv"
+
+# load
+dat  <- read.csv(file.path(indir, infile), skip = 2)
+str(dat)
+
+```
 
 # Conclusions
